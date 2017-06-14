@@ -18,6 +18,10 @@
 
 #define REQ_TAG "HTTP_REQ"
 
+// Hack to define these functions not defined in openssl/ssl.h
+int SSL_use_PrivateKey(SSL *ssl, EVP_PKEY *pkey);
+int SSL_use_certificate(SSL *ssl, X509 *x);
+
 #define REQ_CHECK(check, log, ret) if(check) {ESP_LOGE(REQ_TAG, log);ret;}
 
 static int resolve_dns(const char *host, struct sockaddr_in *ip) {
@@ -84,6 +88,16 @@ static int nossl_connect(request_t *req)
     req->socket = socket;
     return socket;
 }
+
+static int ssl_close(request_t *req)
+{
+    SSL_shutdown(req->ssl);
+    SSL_free(req->ssl);
+    close(req->socket);
+    SSL_CTX_free(req->ctx);
+    return 0;
+}
+
 static int ssl_connect(request_t *req)
 {
     nossl_connect(req);
@@ -92,8 +106,41 @@ static int ssl_connect(request_t *req)
     //TODO: Check
     req->ctx = SSL_CTX_new(TLSv1_1_client_method());
     req->ssl = SSL_new(req->ctx);
+    
     SSL_set_fd(req->ssl, req->socket);
-    SSL_connect(req->ssl);
+
+    if (req->cacert != NULL)
+    {
+        SSL_set_verify(req->ssl,SSL_VERIFY_PEER,NULL);
+        X509 *cert=X509_new();
+        d2i_X509(&cert, req->cacert,req->cacert_len);
+        SSL_add_client_CA(req->ssl, cert);
+    }
+
+    if((req->clientcert != NULL)||(req->clientkey!=NULL))
+    {
+        X509 *clientcert=X509_new();
+        d2i_X509(&clientcert, req->clientcert,req->clientcert_len);
+
+        EVP_PKEY *clientpkey=d2i_PrivateKey(0,NULL, &req->clientkey,req->clientkey_len);
+
+        SSL_use_certificate(req->ssl,clientcert);
+        SSL_use_PrivateKey(req->ssl,clientpkey);
+    }
+
+    int status=SSL_connect(req->ssl);
+
+    if(req->cacert != NULL)
+    {
+        if(status==1) {
+	       ESP_LOGI(REQ_TAG,"SSL_connect successful");
+        }
+        else
+        {
+            return -1;
+        }
+    }
+
     return 0;
 }
 static int ssl_write(request_t *req, char *buffer, int len)
@@ -115,14 +162,7 @@ static int nossl_read(request_t *req, char *buffer, int len)
 {
     return read(req->socket, buffer, len);
 }
-static int ssl_close(request_t *req)
-{
-    SSL_shutdown(req->ssl);
-    SSL_free(req->ssl);
-    close(req->socket);
-    SSL_CTX_free(req->ctx);
-    return 0;
-}
+
 
 static int nossl_close(request_t *req)
 {
@@ -202,6 +242,28 @@ request_t *req_new(const char *uri)
 
 }
 
+void req_setpem(request_t *req, REQ_OPTS opt, const uint8_t * data, int len)
+{
+    if(!req || !data)
+        return;
+    switch(opt) {
+        case REQ_SET_CACERT:
+            req->cacert=data;
+            req->cacert_len=len;
+            break;
+        case REQ_SET_CLIENTCERT:
+            req->clientcert=data;
+            req->clientcert_len=len;
+            break;
+        case REQ_SET_CLIENTKEY:
+            req->clientkey=data;
+            req->clientkey_len=len;
+            break;
+        default:
+            break;
+    }
+
+}
 void req_setopt(request_t *req, REQ_OPTS opt, void* data)
 {
     int post_len;

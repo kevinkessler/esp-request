@@ -20,7 +20,10 @@ typedef enum {
     REQ_SET_UPLOAD_LEN,
     REQ_FUNC_DOWNLOAD_CB,
     REQ_FUNC_UPLOAD_CB,
-    REQ_REDIRECT_FOLLOW
+    REQ_REDIRECT_FOLLOW,
+    REQ_SET_CACERT,
+    REQ_SET_CLIENTCERT,
+    REQ_SET_CLIENTKEY
 } REQ_OPTS;
 
 
@@ -42,6 +45,12 @@ typedef struct request_t {
     req_list_t *header;
     SSL_CTX *ctx;
     SSL *ssl;
+    const uint8_t *cacert;
+    int cacert_len;
+    const uint8_t *clientcert;
+    int clientcert_len;
+    const uint8_t *clientkey;
+    int clientkey_len;
     req_buffer_t *buffer;
     int socket;
     int (*_connect)(struct request_t *req);
@@ -61,5 +70,6 @@ request_t *req_new(const char *url);
 void req_setopt(request_t *req, REQ_OPTS opt, void* data);
 void req_clean(request_t *req);
 int req_perform(request_t *req);
+void req_setpem(request_t *req, REQ_OPTS opt, const uint8_t *data, int len);
 
 #endif
